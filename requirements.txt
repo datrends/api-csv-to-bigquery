@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+pandas
+Faker
+python-multipart
+google-cloud-bigquery
+google-cloud-storage
