@@ -1,5 +1,6 @@
 from typing import Annotated
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, Depends
+from fastapi.responses import JSONResponse
 from google.cloud import storage 
 from google.cloud import bigquery
 import os
@@ -56,9 +57,7 @@ def load_bq_table(bucket_name, table_name):
     bucket_uri = f'gs://{bucket_name}'
     csv_uri = f'{bucket_uri}/{table_name}.csv'
 
-    '''Authenticate with BigQuery using service account key (not a recommended approach)'''
-    path_to_sa_key = 'sa_key.json'
-    bq_client = bigquery.Client().from_service_account_json(path_to_sa_key)
+    bq_client = get_bq_client
 
     try:
         print(table_id)
@@ -90,3 +89,50 @@ def load_bq_table(bucket_name, table_name):
 
     #print(f'Archivo <{table_name}.csv> cargado satisfactoriamente a BigQuery. Tabla <{table_name}> con un total de {destination_table.num_rows} registros.')
     return{"message": f"Archivo <{table_name}.csv> cargado satisfactoriamente a BigQuery. Tabla <{table_name}> con un total de {destination_table.num_rows} registros."}
+
+
+def get_bq_client():
+    '''Authenticate with BigQuery using service account key (not a recommended approach)'''
+    path_to_sa_key = 'sa_key.json'
+    with bigquery.Client().from_service_account_json(path_to_sa_key) as client:
+        return client
+
+
+@app.get("/v1/employees_by_depto_job_quarter/{year}")
+async def query_hired_employees(
+    year: int, bq_client: bigquery.client.Client = Depends(get_bq_client)
+):
+    query =  f"""
+                SELECT
+                EXTRACT(QUARTER FROM hire_date) AS quarter,
+                d.department_name,
+                j.job_title,
+                COUNT(*) AS num_employees
+                FROM
+                    `hired_employees.employees` e
+                    JOIN `hired_employees.departments` d ON e.department_id = d.department_id
+                    JOIN `hired_employees.jobs` j ON e.job_id = j.job_id
+                WHERE
+                    EXTRACT(YEAR FROM hire_date) = {year}
+                GROUP BY
+                    quarter, department_name, job_title
+                ORDER BY
+                    quarter, department_name, job_title
+    """
+    query_job = bq_client.query(query)
+
+   # Obtiene los resultados
+    results = query_job.result()
+
+    # Formatea los resultados como un diccionario
+    data = []
+    for row in results:
+        data.append({
+            "quarter": row.quarter,
+            "department_name": row.department_name,
+            "job_title": row.job_title,
+            "num_employees": row.num_employees,
+        })
+
+    # Retorna los resultados como JSON
+    return JSONResponse(content=data)
